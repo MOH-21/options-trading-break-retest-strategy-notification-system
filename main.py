@@ -59,10 +59,19 @@ def print_and_log(text):
     log(text)
 
 
+def _format_hhmm(hhmm):
+    """Format HHMM integer as HH:MM string."""
+    return f"{hhmm // 100:02d}:{hhmm % 100:02d}"
+
+
 def print_banner():
+    tz_name = datetime.now(TZ).strftime("%Z")
+    mon_start = _format_hhmm(config.MONITOR_START)
+    mon_end = _format_hhmm(config.MONITOR_END)
     print(f"\n{BOLD}{'=' * 60}{RESET}")
     print(f"{BOLD}  Key Levels Monitor{RESET}")
-    print(f"{DIM}  Monitor window: 06:30 – 08:00 PDT{RESET}")
+    print(f"{DIM}  Timezone: {config.TIMEZONE} ({tz_name}){RESET}")
+    print(f"{DIM}  Monitor window: {mon_start} – {mon_end} {tz_name}{RESET}")
     print(f"{DIM}  Max alerts per level: {config.MAX_ALERTS_PER_LEVEL}{RESET}")
     print(f"{BOLD}{'=' * 60}{RESET}\n")
 
@@ -227,7 +236,7 @@ def main():
             now = datetime.now(TZ)
             current_hhmm = now.hour * 100 + now.minute
             if current_hhmm >= config.MONITOR_END:
-                print(f"\n{YELLOW}Monitor window closed (08:00 PDT).{RESET}")
+                print(f"\n{YELLOW}Monitor window closed ({_format_hhmm(config.MONITOR_END)}).{RESET}")
                 monitor.stop()
                 break
             time.sleep(1)

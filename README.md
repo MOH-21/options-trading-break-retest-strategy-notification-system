@@ -57,13 +57,21 @@ Monitor window: **06:30 – 08:00 PDT** (configurable in `config.py`)
    pip install -r requirements.txt
    ```
 
-4. **Create a `.env` file** in the project root with your Alpaca API credentials:
+4. **Create a `.env` file** in the project root:
    ```
    ALPACA_API_KEY=your_api_key_here
    ALPACA_API_SECRET=your_api_secret_here
    ALPACA_BASE_URL=https://paper-api.alpaca.markets
+   TIMEZONE=America/New_York
    ```
-   Get your keys from the [Alpaca Dashboard](https://app.alpaca.markets/paper/dashboard/overview).
+   - Get your API keys from the [Alpaca Dashboard](https://app.alpaca.markets/paper/dashboard/overview).
+   - Set `TIMEZONE` to your local timezone. All session boundaries (market open, monitor window, etc.) adjust automatically. Common values:
+     | Timezone | Value |
+     |----------|-------|
+     | Eastern | `America/New_York` |
+     | Central | `America/Chicago` |
+     | Mountain | `America/Denver` |
+     | Pacific | `America/Los_Angeles` |
 
 5. **(Optional) Desktop notifications setup:**
 

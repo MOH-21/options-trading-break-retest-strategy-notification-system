@@ -1,4 +1,7 @@
 import os
+from datetime import datetime
+
+import pytz
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -20,29 +23,54 @@ WATCHLIST = [
     "GOOG", "INTC",
 ]
 
-# Timezone — all session boundaries are in America/Los_Angeles (PDT/PST)
-TIMEZONE = "America/Los_Angeles"
+# Timezone — set via .env or defaults to America/New_York (Eastern)
+# Common US values: America/New_York, America/Chicago, America/Denver, America/Los_Angeles
+TIMEZONE = os.environ.get("TIMEZONE", "America/New_York")
 
-# Session boundaries (HHMM format, matching PineScript exactly)
-# Full day range for PDH/PDL: 01:00 – 16:58
-FULL_DAY_START = 100   # 01:00
-FULL_DAY_END = 1658    # 16:58
 
-# Premarket for PMH/PML: 01:00 – 06:29
-PREMARKET_START = 100  # 01:00
-PREMARKET_END = 629    # 06:29 (< 630)
+# --- Auto-compute session boundaries from timezone ---
+# All boundaries are defined in US Eastern time (the market's native timezone)
+# and converted to the user's local timezone automatically.
+#
+# Eastern reference times:
+#   Extended hours start:    04:00 ET
+#   Premarket end:           09:29 ET
+#   Market open (RTH):       09:30 ET
+#   Opening range end:       09:34 ET
+#   RTH close:               16:00 ET
+#   Extended hours end:      19:58 ET
+#   Monitor window:          09:30 – 11:00 ET
 
-# RTH: 06:30 – 13:00
-RTH_START = 630        # 06:30
-RTH_END = 1300         # 13:00
+def _et_to_local_hhmm(et_hour, et_minute):
+    """Convert an Eastern time (HH:MM) to local HHMM in the configured timezone."""
+    et = pytz.timezone("America/New_York")
+    local = pytz.timezone(TIMEZONE)
+    # Use a recent weekday to get correct DST offset
+    ref = datetime(2026, 4, 27, et_hour, et_minute)
+    et_time = et.localize(ref)
+    local_time = et_time.astimezone(local)
+    return local_time.hour * 100 + local_time.minute
 
-# 5-min Opening Range: 06:30 – 06:34
-OR_START = 630         # 06:30
-OR_END = 634           # 06:34 (< 635)
+
+# Full day range for PDH/PDL
+FULL_DAY_START = _et_to_local_hhmm(4, 0)
+FULL_DAY_END = _et_to_local_hhmm(19, 58)
+
+# Premarket for PMH/PML
+PREMARKET_START = _et_to_local_hhmm(4, 0)
+PREMARKET_END = _et_to_local_hhmm(9, 29)
+
+# RTH
+RTH_START = _et_to_local_hhmm(9, 30)
+RTH_END = _et_to_local_hhmm(16, 0)
+
+# 5-min Opening Range
+OR_START = _et_to_local_hhmm(9, 30)
+OR_END = _et_to_local_hhmm(9, 34)
 
 # Monitor window (alerts active during this window)
-MONITOR_START = 630    # 06:30
-MONITOR_END = 800      # 08:00
+MONITOR_START = _et_to_local_hhmm(9, 30)
+MONITOR_END = _et_to_local_hhmm(11, 0)
 
 # Alert settings
 MAX_ALERTS_PER_LEVEL = 3
