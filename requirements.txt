@@ -1,0 +1,4 @@
+alpaca-trade-api==3.2.0
+python-dotenv==1.2.2
+pytz==2026.1.post1
+websocket-client==1.9.0
