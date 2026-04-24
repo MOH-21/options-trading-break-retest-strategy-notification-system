@@ -5,6 +5,7 @@ Computes PDH/PDL, PMH/PML from Alpaca historical data, then streams
 real-time 1-min bars to detect breaks and retests during the morning session.
 """
 
+import platform
 import re
 import subprocess
 import sys
@@ -83,6 +84,43 @@ def strip_ansi(text):
     return ANSI_RE.sub('', text)
 
 
+def send_notification(title, body):
+    """Send a desktop notification. Works on Linux, macOS, and Windows."""
+    system = platform.system()
+    try:
+        if system == "Linux":
+            subprocess.Popen(
+                ["notify-send", "-u", "critical", "-t", "10000", title, body],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        elif system == "Darwin":  # macOS
+            script = f'display notification "{body}" with title "{title}" sound name "Glass"'
+            subprocess.Popen(
+                ["osascript", "-e", script],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        elif system == "Windows":
+            # PowerShell toast notification
+            ps_script = (
+                "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, "
+                "ContentType = WindowsRuntime] > $null; "
+                "$template = [Windows.UI.Notifications.ToastNotificationManager]::"
+                "GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); "
+                "$textNodes = $template.GetElementsByTagName('text'); "
+                f"$textNodes.Item(0).AppendChild($template.CreateTextNode('{title}')) > $null; "
+                f"$textNodes.Item(1).AppendChild($template.CreateTextNode('{body}')) > $null; "
+                "$toast = [Windows.UI.Notifications.ToastNotification]::new($template); "
+                "[Windows.UI.Notifications.ToastNotificationManager]::"
+                "CreateToastNotifier('Key Levels Monitor').Show($toast)"
+            )
+            subprocess.Popen(
+                ["powershell", "-Command", ps_script],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+    except FileNotFoundError:
+        pass  # Notification tool not installed — skip silently
+
+
 def alert_with_notification(alert_string):
     """Print alert to terminal and send a desktop notification."""
     print(alert_string)
@@ -91,10 +129,7 @@ def alert_with_notification(alert_string):
     parts = plain.split(" | ", 1)
     title = parts[0].strip() if parts else "Key Level Alert"
     body = parts[1] if len(parts) > 1 else plain
-    subprocess.Popen(
-        ["notify-send", "-u", "critical", "-t", "10000", title, body],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    send_notification(title, body)
 
 
 def main():

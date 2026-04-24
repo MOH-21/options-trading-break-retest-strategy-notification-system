@@ -22,20 +22,34 @@ Monitor window: **06:30 – 08:00 PDT** (configurable in `config.py`)
 
 - Python 3.10+
 - A free [Alpaca Markets](https://alpaca.markets/) account (paper trading works fine)
-- Linux with `libnotify` for desktop notifications (optional)
+- **Linux / macOS / Windows** — desktop notifications work on all three (details below)
 
 ## Setup
 
 1. **Clone the repo:**
    ```bash
-   git clone https://github.com/YOUR_USERNAME/key-levels-monitor.git
-   cd key-levels-monitor
+   git clone https://github.com/MOH-21/options-trading-break-retest-strategy-notification-system.git
+   cd options-trading-break-retest-strategy-notification-system
    ```
 
 2. **Create a virtual environment:**
+
+   **Linux / macOS:**
    ```bash
    python3 -m venv venv
    source venv/bin/activate
+   ```
+
+   **Windows (Command Prompt):**
+   ```cmd
+   python -m venv venv
+   venv\Scripts\activate
+   ```
+
+   **Windows (PowerShell):**
+   ```powershell
+   python -m venv venv
+   venv\Scripts\Activate.ps1
    ```
 
 3. **Install dependencies:**
@@ -43,7 +57,7 @@ Monitor window: **06:30 – 08:00 PDT** (configurable in `config.py`)
    pip install -r requirements.txt
    ```
 
-4. **Create a `.env` file** with your Alpaca API credentials:
+4. **Create a `.env` file** in the project root with your Alpaca API credentials:
    ```
    ALPACA_API_KEY=your_api_key_here
    ALPACA_API_SECRET=your_api_secret_here
@@ -51,7 +65,11 @@ Monitor window: **06:30 – 08:00 PDT** (configurable in `config.py`)
    ```
    Get your keys from the [Alpaca Dashboard](https://app.alpaca.markets/paper/dashboard/overview).
 
-5. **(Optional) Install `libnotify` for desktop popup notifications:**
+5. **(Optional) Desktop notifications setup:**
+
+   Notifications work out of the box on **macOS** and **Windows** — no extra install needed.
+
+   On **Linux**, install `libnotify`:
    ```bash
    # Ubuntu/Debian
    sudo apt install libnotify-bin
@@ -77,7 +95,7 @@ This will:
 1. Connect to Alpaca and compute levels for all tickers in the watchlist
 2. Stream 1-minute bars via WebSocket
 3. Print color-coded alerts in the terminal
-4. Send desktop notifications (Linux) so you can see alerts while charts are fullscreen
+4. Send desktop notifications (Linux, macOS, Windows) so you can see alerts while charts are fullscreen
 5. Auto-stop at 08:00 PDT
 
 Press `Ctrl+C` for a session summary at any time.
@@ -128,4 +146,4 @@ key-levels-monitor/
 
 - The free `iex` data feed has a 15-minute delay. For real-time data, switch `DATA_FEED` to `"sip"` in `config.py` (requires a paid Alpaca plan).
 - All times are in Pacific time (PDT/PST). The session boundaries match common US equity trading conventions.
-- Desktop notifications require a notification daemon running (standard on most Linux desktop environments).
+- Desktop notifications use `notify-send` on Linux, `osascript` on macOS, and PowerShell toast notifications on Windows. If the notification tool isn't available, alerts still print to the terminal.
