@@ -5,6 +5,7 @@ Computes PDH/PDL, PMH/PML from Alpaca historical data, then streams
 real-time 1-min bars to detect breaks and retests during the morning session.
 """
 
+import os
 import platform
 import re
 import subprocess
@@ -22,6 +23,10 @@ from monitor import KeyLevelMonitor
 
 TZ = pytz.timezone(config.TIMEZONE)
 
+# Session log file — written to logs/ directory
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+LOG_FILE = None
+
 # ANSI formatting
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -29,6 +34,29 @@ RESET = "\033[0m"
 CYAN = "\033[96m"
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
+
+
+def open_log():
+    """Create the log file for this session. Returns the file handle."""
+    global LOG_FILE
+    os.makedirs(LOG_DIR, exist_ok=True)
+    date_str = datetime.now(TZ).strftime("%Y-%m-%d_%H%M")
+    path = os.path.join(LOG_DIR, f"session_{date_str}.txt")
+    LOG_FILE = open(path, "w")
+    return path
+
+
+def log(text):
+    """Write plain text to the session log file."""
+    if LOG_FILE:
+        LOG_FILE.write(strip_ansi(text) + "\n")
+        LOG_FILE.flush()
+
+
+def print_and_log(text):
+    """Print to terminal and write to log."""
+    print(text)
+    log(text)
 
 
 def print_banner():
@@ -42,8 +70,8 @@ def print_banner():
 def print_levels_table(all_levels):
     """Print a formatted table of computed levels for all tickers."""
     header = f"{'Ticker':<6} {'PDH':>10} {'PDL':>10} {'PMH':>10} {'PML':>10} {'ORH':>10} {'ORL':>10}"
-    print(f"{BOLD}{header}{RESET}")
-    print("-" * len(header))
+    print_and_log(f"{BOLD}{header}{RESET}")
+    print_and_log("-" * len(header))
 
     for ticker in sorted(all_levels.keys()):
         levels = all_levels[ticker]
@@ -54,27 +82,27 @@ def print_levels_table(all_levels):
                 row += f" {val:>10.2f}"
             else:
                 row += f" {'--':>10}"
-        print(row)
-    print()
+        print_and_log(row)
+    print_and_log("")
 
 
 def print_session_summary(monitor):
     """Print end-of-session summary."""
-    print(f"\n{BOLD}{'=' * 60}{RESET}")
-    print(f"{BOLD}  Session Summary{RESET}")
-    print(f"{BOLD}{'=' * 60}{RESET}\n")
+    print_and_log(f"\n{BOLD}{'=' * 60}{RESET}")
+    print_and_log(f"{BOLD}  Session Summary{RESET}")
+    print_and_log(f"{BOLD}{'=' * 60}{RESET}\n")
 
     header = f"{'Ticker':<6} {'Level':<6} {'Alerts':>7} {'Broken?':>8} {'Direction':>10}"
-    print(f"{BOLD}{header}{RESET}")
-    print("-" * len(header))
+    print_and_log(f"{BOLD}{header}{RESET}")
+    print_and_log("-" * len(header))
 
     for (ticker, level_name), state in sorted(monitor.alert_states.items()):
         if state.cross_count > 0 or state.has_broken:
             broken = "Yes" if state.has_broken else "No"
             direction = state.break_direction or "--"
-            print(f"{ticker:<6} {level_name:<6} {state.cross_count:>7} {broken:>8} {direction:>10}")
+            print_and_log(f"{ticker:<6} {level_name:<6} {state.cross_count:>7} {broken:>8} {direction:>10}")
 
-    print()
+    print_and_log("")
 
 
 ANSI_RE = re.compile(r'\033\[[0-9;]*m')
@@ -122,8 +150,8 @@ def send_notification(title, body):
 
 
 def alert_with_notification(alert_string):
-    """Print alert to terminal and send a desktop notification."""
-    print(alert_string)
+    """Print alert to terminal, log to file, and send a desktop notification."""
+    print_and_log(alert_string)
     plain = strip_ansi(alert_string)
     # Split into title (ticker + level) and body (event details)
     parts = plain.split(" | ", 1)
@@ -138,7 +166,13 @@ def main():
         print("Error: Set ALPACA_API_KEY and ALPACA_API_SECRET environment variables.")
         sys.exit(1)
 
+    log_path = open_log()
+
     print_banner()
+    log(f"Session started: {datetime.now(TZ).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    log(f"Monitor window: {config.MONITOR_START} – {config.MONITOR_END}")
+    log(f"Watchlist: {', '.join(config.WATCHLIST)}")
+    log("")
 
     api = REST(config.ALPACA_API_KEY, config.ALPACA_API_SECRET, config.BASE_URL)
 
@@ -177,6 +211,9 @@ def main():
         print(f"\n{YELLOW}Shutting down...{RESET}")
         monitor.stop()
         print_session_summary(monitor)
+        if LOG_FILE:
+            LOG_FILE.close()
+        print(f"{DIM}Session log saved to: {log_path}{RESET}")
         sys.exit(0)
 
     signal.signal(signal.SIGINT, handle_signal)
@@ -198,6 +235,10 @@ def main():
         monitor.stop()
 
     print_session_summary(monitor)
+
+    if LOG_FILE:
+        LOG_FILE.close()
+    print(f"{DIM}Session log saved to: {log_path}{RESET}")
 
 
 if __name__ == "__main__":

@@ -100,6 +100,8 @@ This will:
 
 Press `Ctrl+C` for a session summary at any time.
 
+Every session is automatically saved to `logs/session_YYYY-MM-DD_HHMM.txt` with all levels, alerts, and the session summary — so you can review everything after the trading day.
+
 ### Historical Simulation
 
 Replay a past trading day through the alert engine to backtest:
@@ -139,6 +141,7 @@ key-levels-monitor/
 ├── alerts.py        # Alert engine (break/retest detection + formatting)
 ├── monitor.py       # WebSocket client for real-time bar streaming
 ├── requirements.txt
+├── logs/            # Session logs (auto-created, not tracked by git)
 └── .env             # Your API keys (not tracked by git)
 ```
 
