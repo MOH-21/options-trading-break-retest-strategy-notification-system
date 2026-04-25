@@ -138,6 +138,21 @@ Edit `config.py` to customize:
 | `MAX_ALERTS_PER_LEVEL` | `3` | Max alerts per ticker/level pair |
 | `OR_START` / `OR_END` | `630` / `634` | Opening range window |
 
+### Optional Features (via `.env`)
+
+These features are **enabled by default**. Set to `false` in your `.env` to disable.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `VOLUME_CONFIRMATION` | `true` | Tag alerts as `HIGH VOL` / `LOW VOL` relative to session average |
+| `VOLUME_LOOKBACK` | `10` | Number of bars to average for volume comparison |
+| `VOLUME_HIGH_MULT` | `1.5` | Multiplier above average to count as HIGH VOL |
+| `LEVEL_CLUSTERING` | `true` | Group nearby levels into clusters (e.g. `PDH+PMH`) |
+| `CLUSTER_PCT` | `0.2` | Max % distance between levels to form a cluster |
+| `PROXIMITY_ALERTS` | `true` | Alert when price approaches a level before crossing |
+| `PROXIMITY_PCT` | `0.15` | How close (%) to a level to trigger proximity alert |
+| `PROXIMITY_MAX` | `1` | Max proximity alerts per level per session |
+
 ## Project Structure
 
 ```

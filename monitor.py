@@ -8,13 +8,14 @@ and runs each bar through the alert engine.
 import json
 import time
 import threading
+from collections import defaultdict
 from datetime import datetime
 
 import pytz
 import websocket
 
 import config
-from alerts import evaluate_bar, AlertState
+from alerts import evaluate_bar, check_proximity, find_clusters, AlertState
 
 TZ = pytz.timezone(config.TIMEZONE)
 
@@ -42,8 +43,24 @@ class KeyLevelMonitor:
         self._or_bars = {t: {"high": None, "low": None} for t in levels}
         self._or_locked = {t: False for t in levels}
 
+        # Volume tracking: {ticker: [volumes]}
+        self._volume_history = defaultdict(list)
+
+        # Level clusters: {ticker: {level_name: [peer_names]}}
+        self._clusters = {}
+        for ticker in levels:
+            self._clusters[ticker] = find_clusters(levels[ticker])
+
     def _hhmm(self, dt):
         return dt.hour * 100 + dt.minute
+
+    def _avg_volume(self, ticker):
+        """Get rolling average volume for a ticker."""
+        hist = self._volume_history[ticker]
+        if not hist:
+            return 0
+        lookback = min(len(hist), config.VOLUME_LOOKBACK)
+        return sum(hist[-lookback:]) / lookback
 
     def _on_open(self, ws):
         auth_msg = {
@@ -95,6 +112,11 @@ class KeyLevelMonitor:
         candle_high = bar["h"]
         candle_low = bar["l"]
         candle_close = bar["c"]
+        volume = bar.get("v", 0)
+
+        # Track volume
+        self._volume_history[ticker].append(volume)
+        avg_vol = self._avg_volume(ticker)
 
         # --- Opening Range accumulation (06:30 - 06:34) ---
         if not self._or_locked[ticker]:
@@ -117,6 +139,8 @@ class KeyLevelMonitor:
                     # Initialize alert states for OR levels
                     self.alert_states[(ticker, "ORH")] = AlertState()
                     self.alert_states[(ticker, "ORL")] = AlertState()
+                    # Recompute clusters with OR levels
+                    self._clusters[ticker] = find_clusters(self.levels[ticker])
                     print(
                         f"  OR locked for {ticker}: "
                         f"ORH={or_data['high']:.2f}, ORL={or_data['low']:.2f}"
@@ -128,10 +152,22 @@ class KeyLevelMonitor:
                 continue
 
             state = self.alert_states[(ticker, level_name)]
+            cluster_peers = self._clusters[ticker].get(level_name, [])
+
+            # Check proximity first (fires before a break)
+            prox_alert = check_proximity(
+                ticker, level_name, level_price, candle_close, state
+            )
+            if prox_alert:
+                self.on_alert(prox_alert)
+
             alert = evaluate_bar(
                 ticker, level_name, level_price,
                 candle_open, candle_high, candle_low, candle_close,
                 state,
+                volume=volume,
+                avg_volume=avg_vol,
+                cluster_peers=cluster_peers or None,
             )
             if alert:
                 self.on_alert(alert)

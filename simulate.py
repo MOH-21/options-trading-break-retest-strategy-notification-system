@@ -21,7 +21,8 @@ from alpaca_trade_api.rest import REST, TimeFrame
 import config
 from levels import (compute_pdh_pdl, compute_pmh_pml, compute_opening_range,
                     _filter_bars_by_time, _find_previous_trading_day)
-from alerts import evaluate_bar, format_alert, analyze_price_action, AlertState
+from alerts import (evaluate_bar, format_alert, analyze_price_action,
+                    check_proximity, find_clusters, classify_volume, AlertState)
 
 TZ = pytz.timezone(config.TIMEZONE)
 
@@ -170,6 +171,14 @@ def simulate_multi(api, tickers, sim_date, speed=0.03):
         for level_name in all_levels[ticker]:
             alert_states[(ticker, level_name)] = AlertState()
 
+    # Compute level clusters
+    all_clusters = {}
+    for ticker in tickers:
+        all_clusters[ticker] = find_clusters(all_levels[ticker])
+
+    # Volume tracking per ticker
+    volume_history = defaultdict(list)
+
     # Track session open price for % change
     session_open = {}
 
@@ -197,26 +206,49 @@ def simulate_multi(api, tickers, sim_date, speed=0.03):
         # Evaluate alerts for each ticker at this timestamp
         alerts_this_bar = []
         for ticker, row in bars_at_ts.items():
+            bar_vol = row.get("volume", 0)
+            volume_history[ticker].append(bar_vol)
+            # Compute rolling average volume
+            hist = volume_history[ticker]
+            lookback = min(len(hist), config.VOLUME_LOOKBACK)
+            avg_vol = sum(hist[-lookback:]) / lookback if lookback > 0 else 0
+
             for level_name, level_price in all_levels[ticker].items():
                 if level_price is None:
                     continue
                 state = alert_states[(ticker, level_name)]
+                cluster_peers = all_clusters[ticker].get(level_name, [])
+
+                # Check proximity
+                prox_alert = check_proximity(
+                    ticker, level_name, level_price, row["close"], state,
+                    timestamp=ts_pdt.to_pydatetime(),
+                )
+                if prox_alert:
+                    alerts_this_bar.append((ticker, prox_alert))
+
                 alert = evaluate_bar(
                     ticker, level_name, level_price,
                     row["open"], row["high"], row["low"], row["close"],
                     state,
+                    volume=bar_vol,
+                    avg_volume=avg_vol,
+                    cluster_peers=cluster_peers or None,
                 )
                 if alert:
-                    # Reformat with historical timestamp + price action
+                    # Reformat with historical timestamp + all context
                     pa_label, pa_detail = analyze_price_action(
                         row["open"], row["high"], row["low"], row["close"]
                     )
+                    vol_tag = classify_volume(bar_vol, avg_vol)
                     alert = format_alert(
                         ticker, level_name, level_price,
                         _get_event_type(state),
                         row["close"],
                         ts_pdt.to_pydatetime(),
                         pa_label, pa_detail,
+                        vol_tag,
+                        cluster_peers or None,
                     )
                     alerts_this_bar.append((ticker, alert))
 

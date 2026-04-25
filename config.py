@@ -74,3 +74,24 @@ MONITOR_END = _et_to_local_hhmm(11, 0)
 
 # Alert settings
 MAX_ALERTS_PER_LEVEL = 3
+
+# --- Optional features (toggle via .env) ---
+
+# Volume confirmation: tag alerts as HIGH VOL / LOW VOL relative to session average
+VOLUME_CONFIRMATION = os.environ.get("VOLUME_CONFIRMATION", "true").lower() == "true"
+# How many bars of volume history to average against
+VOLUME_LOOKBACK = int(os.environ.get("VOLUME_LOOKBACK", "10"))
+# Multiplier above average to count as HIGH VOL (e.g. 1.5 = 50% above avg)
+VOLUME_HIGH_MULT = float(os.environ.get("VOLUME_HIGH_MULT", "1.5"))
+
+# Level clustering: group levels within X% of each other
+LEVEL_CLUSTERING = os.environ.get("LEVEL_CLUSTERING", "true").lower() == "true"
+# Max % distance between levels to form a cluster
+CLUSTER_PCT = float(os.environ.get("CLUSTER_PCT", "0.2"))
+
+# Proximity alerts: warn when price approaches a key level
+PROXIMITY_ALERTS = os.environ.get("PROXIMITY_ALERTS", "true").lower() == "true"
+# How close (%) to a level before triggering a proximity alert
+PROXIMITY_PCT = float(os.environ.get("PROXIMITY_PCT", "0.15"))
+# Only fire one proximity alert per level per session
+PROXIMITY_MAX = int(os.environ.get("PROXIMITY_MAX", "1"))
