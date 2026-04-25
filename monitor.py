@@ -91,6 +91,7 @@ class KeyLevelMonitor:
         if current_hhmm < config.MONITOR_START or current_hhmm >= config.MONITOR_END:
             return
 
+        candle_open = bar["o"]
         candle_high = bar["h"]
         candle_low = bar["l"]
         candle_close = bar["c"]
@@ -129,7 +130,7 @@ class KeyLevelMonitor:
             state = self.alert_states[(ticker, level_name)]
             alert = evaluate_bar(
                 ticker, level_name, level_price,
-                candle_high, candle_low, candle_close,
+                candle_open, candle_high, candle_low, candle_close,
                 state,
             )
             if alert:

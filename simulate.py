@@ -21,7 +21,7 @@ from alpaca_trade_api.rest import REST, TimeFrame
 import config
 from levels import (compute_pdh_pdl, compute_pmh_pml, compute_opening_range,
                     _filter_bars_by_time, _find_previous_trading_day)
-from alerts import evaluate_bar, format_alert, AlertState
+from alerts import evaluate_bar, format_alert, analyze_price_action, AlertState
 
 TZ = pytz.timezone(config.TIMEZONE)
 
@@ -203,16 +203,20 @@ def simulate_multi(api, tickers, sim_date, speed=0.03):
                 state = alert_states[(ticker, level_name)]
                 alert = evaluate_bar(
                     ticker, level_name, level_price,
-                    row["high"], row["low"], row["close"],
+                    row["open"], row["high"], row["low"], row["close"],
                     state,
                 )
                 if alert:
-                    # Reformat with historical timestamp
+                    # Reformat with historical timestamp + price action
+                    pa_label, pa_detail = analyze_price_action(
+                        row["open"], row["high"], row["low"], row["close"]
+                    )
                     alert = format_alert(
                         ticker, level_name, level_price,
                         _get_event_type(state),
                         row["close"],
                         ts_pdt.to_pydatetime(),
+                        pa_label, pa_detail,
                     )
                     alerts_this_bar.append((ticker, alert))
 
