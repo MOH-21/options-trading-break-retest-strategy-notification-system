@@ -1,7 +1,7 @@
 """
-Key Levels Monitor — Entry Point
+Key Levels Monitor -- Entry Point
 
-Computes PDH/PDL, PMH/PML from Alpaca historical data, then streams
+Computes PDH/PDL, PMH/PML from FMP historical data, then polls
 real-time 1-min bars to detect breaks and retests during the morning session.
 """
 
@@ -15,15 +15,15 @@ import signal
 from datetime import datetime
 
 import pytz
-from alpaca_trade_api.rest import REST
 
 import config
+import fmp_client
 from levels import get_levels_for_ticker
 from monitor import KeyLevelMonitor
 
 TZ = pytz.timezone(config.TIMEZONE)
 
-# Session log file — written to logs/ directory
+# Session log file -- written to logs/ directory
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 LOG_FILE = None
 
@@ -71,8 +71,9 @@ def print_banner():
     print(f"\n{BOLD}{'=' * 60}{RESET}")
     print(f"{BOLD}  Key Levels Monitor{RESET}")
     print(f"{DIM}  Timezone: {config.TIMEZONE} ({tz_name}){RESET}")
-    print(f"{DIM}  Monitor window: {mon_start} – {mon_end} {tz_name}{RESET}")
+    print(f"{DIM}  Monitor window: {mon_start} - {mon_end} {tz_name}{RESET}")
     print(f"{DIM}  Max alerts per level: {config.MAX_ALERTS_PER_LEVEL}{RESET}")
+    print(f"{DIM}  Data: FMP (polling every 60s){RESET}")
     print(f"{BOLD}{'=' * 60}{RESET}\n")
 
 
@@ -137,7 +138,6 @@ def send_notification(title, body):
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
         elif system == "Windows":
-            # PowerShell toast notification
             ps_script = (
                 "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, "
                 "ContentType = WindowsRuntime] > $null; "
@@ -155,7 +155,7 @@ def send_notification(title, body):
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
     except FileNotFoundError:
-        pass  # Notification tool not installed — skip silently
+        pass  # Notification tool not installed -- skip silently
 
 
 def alert_with_notification(alert_string):
@@ -171,26 +171,27 @@ def alert_with_notification(alert_string):
 
 def main():
     # Validate credentials
-    if not config.ALPACA_API_KEY or not config.ALPACA_API_SECRET:
-        print("Error: Set ALPACA_API_KEY and ALPACA_API_SECRET environment variables.")
+    if not config.FMP_API_KEY:
+        print("Error: Set FMP_API_KEY environment variable.")
         sys.exit(1)
 
     log_path = open_log()
 
     print_banner()
     log(f"Session started: {datetime.now(TZ).strftime('%Y-%m-%d %H:%M:%S %Z')}")
-    log(f"Monitor window: {config.MONITOR_START} – {config.MONITOR_END}")
+    log(f"Monitor window: {config.MONITOR_START} - {config.MONITOR_END}")
     log(f"Watchlist: {', '.join(config.WATCHLIST)}")
     log("")
 
-    api = REST(config.ALPACA_API_KEY, config.ALPACA_API_SECRET, config.BASE_URL)
-
     # Validate connection
     try:
-        account = api.get_account()
-        print(f"{GREEN}Connected to Alpaca ({account.status}){RESET}\n")
+        quote = fmp_client.get_quote("SPY")
+        if quote:
+            print(f"{GREEN}Connected to FMP (SPY @ {quote['price']:.2f}){RESET}\n")
+        else:
+            print(f"{GREEN}Connected to FMP{RESET}\n")
     except Exception as e:
-        print(f"Failed to connect to Alpaca: {e}")
+        print(f"Failed to connect to FMP: {e}")
         sys.exit(1)
 
     # Compute levels for all tickers
@@ -198,7 +199,7 @@ def main():
     all_levels = {}
     for ticker in config.WATCHLIST:
         try:
-            levels = get_levels_for_ticker(api, ticker)
+            levels = get_levels_for_ticker(ticker)
             all_levels[ticker] = levels
             sys.stdout.write(".")
             sys.stdout.flush()
@@ -228,11 +229,11 @@ def main():
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    # Check if we should auto-stop at MONITOR_END
-    ws_thread = monitor.start_background()
+    # Start polling in background
+    poll_thread = monitor.start_background()
 
     try:
-        while ws_thread.is_alive():
+        while poll_thread.is_alive():
             now = datetime.now(TZ)
             current_hhmm = now.hour * 100 + now.minute
             if current_hhmm >= config.MONITOR_END:

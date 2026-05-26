@@ -1,27 +1,30 @@
 import os
+import sys
 from datetime import datetime
 
 import pytz
 from dotenv import load_dotenv
 
-load_dotenv()
+# When packaged with PyInstaller, look for .env next to the executable
+if getattr(sys, 'frozen', False):
+    _base = os.path.dirname(sys.executable)
+else:
+    _base = os.path.dirname(os.path.abspath(__file__))
 
-# Alpaca API credentials (set these as environment variables)
-ALPACA_API_KEY = os.environ.get("ALPACA_API_KEY", "")
-ALPACA_API_SECRET = os.environ.get("ALPACA_API_SECRET", "")
-BASE_URL = os.environ.get("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+load_dotenv(os.path.join(_base, '.env'))
 
-# Data feed: "iex" (free) or "sip" (paid)
-DATA_FEED = "iex"
-WS_URL = f"wss://stream.data.alpaca.markets/v2/{DATA_FEED}"
+# FMP (Financial Modeling Prep) API key
+FMP_API_KEY = os.environ.get("FMP_API_KEY", "")
 
-# Watchlist
-WATCHLIST = [
+# Watchlist — override via WATCHLIST in .env (comma-separated), or use default
+_DEFAULT_WATCHLIST = [
     "SPY", "QQQ", "SMH", "IWM", "DJI",
     "AAPL", "TSLA", "AMD", "NVDA", "PLTR",
     "MU", "NFLX", "MSFT", "AMZN", "META",
     "GOOG", "INTC",
 ]
+_wl = os.environ.get("WATCHLIST", "")
+WATCHLIST = [s.strip() for s in _wl.split(",") if s.strip()] if _wl else _DEFAULT_WATCHLIST
 
 # Timezone — set via .env or defaults to America/New_York (Eastern)
 # Common US values: America/New_York, America/Chicago, America/Denver, America/Los_Angeles

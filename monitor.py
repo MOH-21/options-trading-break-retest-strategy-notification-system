@@ -1,27 +1,26 @@
 """
-Websocket monitor for real-time 1-minute bar data from Alpaca.
+Polling monitor for real-time 1-minute bar data from FMP.
 
-Subscribes to bars for all watchlist tickers, computes opening range at 06:35,
-and runs each bar through the alert engine.
+Polls FMP REST API every 60 seconds for all watchlist tickers,
+computes opening range at 06:35, and runs each bar through the alert engine.
 """
 
-import json
 import time
 import threading
 from collections import defaultdict
 from datetime import datetime
 
 import pytz
-import websocket
 
 import config
+import fmp_client
 from alerts import evaluate_bar, check_proximity, find_clusters, AlertState
 
 TZ = pytz.timezone(config.TIMEZONE)
 
 
 class KeyLevelMonitor:
-    """Connects to Alpaca websocket and monitors key levels."""
+    """Polls FMP for 1-min bars and monitors key levels."""
 
     def __init__(self, levels, on_alert=None):
         """
@@ -51,6 +50,9 @@ class KeyLevelMonitor:
         for ticker in levels:
             self._clusters[ticker] = find_clusters(levels[ticker])
 
+        # Track last processed bar per ticker
+        self._last_seen = {}
+
     def _hhmm(self, dt):
         return dt.hour * 100 + dt.minute
 
@@ -62,57 +64,44 @@ class KeyLevelMonitor:
         lookback = min(len(hist), config.VOLUME_LOOKBACK)
         return sum(hist[-lookback:]) / lookback
 
-    def _on_open(self, ws):
-        auth_msg = {
-            "action": "auth",
-            "key": config.ALPACA_API_KEY,
-            "secret": config.ALPACA_API_SECRET,
-        }
-        ws.send(json.dumps(auth_msg))
+    def _poll_loop(self):
+        """Main polling loop — fetches 1-min bars every 60s for all tickers."""
+        while self._running:
+            today = datetime.now(TZ).strftime("%Y-%m-%d")
+            for ticker in self.levels:
+                if not self._running:
+                    break
+                try:
+                    bars = fmp_client.fetch_bars(
+                        ticker, "1min", start=today, end=today
+                    )
+                    last_seen = self._last_seen.get(ticker)
+                    for bar in bars:
+                        if last_seen and bar["date"] <= last_seen:
+                            continue
+                        self._process_bar(ticker, bar)
+                    if bars:
+                        self._last_seen[ticker] = bars[-1]["date"]
+                except Exception as e:
+                    print(f"  Poll error for {ticker}: {e}")
 
-    def _on_message(self, ws, message):
-        data = json.loads(message)
+            if self._running:
+                time.sleep(60)
 
-        for msg in data:
-            msg_type = msg.get("T")
-
-            if msg_type == "success":
-                if msg.get("msg") == "authenticated":
-                    # Subscribe to bars for all tickers
-                    sub_msg = {
-                        "action": "subscribe",
-                        "bars": list(self.levels.keys()),
-                    }
-                    ws.send(json.dumps(sub_msg))
-                    print(f"Subscribed to {len(self.levels)} tickers")
-                continue
-
-            if msg_type == "subscription":
-                continue
-
-            if msg_type == "b":
-                # 1-minute bar
-                self._process_bar(msg)
-
-    def _process_bar(self, bar):
-        ticker = bar["S"]
-        if ticker not in self.levels:
-            return
-
-        # Parse bar timestamp and convert to PDT
-        bar_time = datetime.fromisoformat(bar["t"].replace("Z", "+00:00"))
-        bar_pdt = bar_time.astimezone(TZ)
-        current_hhmm = self._hhmm(bar_pdt)
+    def _process_bar(self, ticker, bar):
+        """Process a single 1-min bar through the alert engine."""
+        bar_local = bar["datetime_et"].astimezone(TZ)
+        current_hhmm = self._hhmm(bar_local)
 
         # Only process during monitor window
         if current_hhmm < config.MONITOR_START or current_hhmm >= config.MONITOR_END:
             return
 
-        candle_open = bar["o"]
-        candle_high = bar["h"]
-        candle_low = bar["l"]
-        candle_close = bar["c"]
-        volume = bar.get("v", 0)
+        candle_open = bar["open"]
+        candle_high = bar["high"]
+        candle_low = bar["low"]
+        candle_close = bar["close"]
+        volume = bar.get("volume", 0)
 
         # Track volume
         self._volume_history[ticker].append(volume)
@@ -172,52 +161,19 @@ class KeyLevelMonitor:
             if alert:
                 self.on_alert(alert)
 
-    def _on_error(self, ws, error):
-        print(f"WebSocket error: {error}")
-
-    def _on_close(self, ws, close_status_code, close_msg):
-        print(f"WebSocket closed: {close_status_code} {close_msg}")
-        if self._running:
-            self._reconnect()
-
-    def _reconnect(self):
-        delay = 1
-        max_delay = 60
-        while self._running:
-            print(f"Reconnecting in {delay}s...")
-            time.sleep(delay)
-            try:
-                self._connect()
-                return
-            except Exception as e:
-                print(f"Reconnect failed: {e}")
-                delay = min(delay * 2, max_delay)
-
-    def _connect(self):
-        self.ws = websocket.WebSocketApp(
-            config.WS_URL,
-            on_open=self._on_open,
-            on_message=self._on_message,
-            on_error=self._on_error,
-            on_close=self._on_close,
-        )
-        self.ws.run_forever()
-
     def start(self):
-        """Start the websocket monitor. Blocks until stop() is called."""
+        """Start the polling monitor. Blocks until stop() is called."""
         self._running = True
-        print(f"Connecting to {config.WS_URL}...")
-        self._connect()
+        print("Starting FMP polling monitor (60s interval)...")
+        self._poll_loop()
 
     def stop(self):
         """Stop the monitor."""
         self._running = False
-        if hasattr(self, "ws"):
-            self.ws.close()
 
     def start_background(self):
         """Start in a background thread. Returns the thread."""
         self._running = True
-        t = threading.Thread(target=self._connect, daemon=True)
+        t = threading.Thread(target=self._poll_loop, daemon=True)
         t.start()
         return t

@@ -5,6 +5,9 @@ venv/
 # Session logs
 logs/
 
+# Transcripts (audio + text from YouTube ingestor)
+transcripts/
+
 # Python
 __pycache__/
 *.pyc

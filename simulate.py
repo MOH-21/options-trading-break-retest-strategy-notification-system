@@ -1,5 +1,5 @@
 """
-Key Levels Monitor — Simulation Mode
+Key Levels Monitor -- Simulation Mode
 
 Replays a historical trading day's 1-min bars through the alert engine
 for multiple tickers simultaneously on a unified timeline.
@@ -13,14 +13,14 @@ Usage:
 import sys
 import time
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pytz
-from alpaca_trade_api.rest import REST, TimeFrame
 
 import config
+import fmp_client
 from levels import (compute_pdh_pdl, compute_pmh_pml, compute_opening_range,
-                    _filter_bars_by_time, _find_previous_trading_day)
+                    _filter_bars_by_time)
 from alerts import (evaluate_bar, format_alert, analyze_price_action,
                     check_proximity, find_clusters, classify_volume, AlertState)
 
@@ -41,66 +41,41 @@ DEFAULT_TECH = ["NVDA", "AAPL", "MSFT", "META", "AMZN"]
 BENCHMARK = "QQQ"
 
 
-def get_levels_for_sim(api, ticker, sim_date):
+def get_levels_for_sim(ticker, sim_date):
     """Compute PDH/PDL, PMH/PML, ORH/ORL for a simulation date."""
     levels = {"PDH": None, "PDL": None, "PMH": None, "PML": None,
               "ORH": None, "ORL": None}
 
     # Find previous trading day relative to sim_date
-    start = (sim_date - timedelta(days=7)).strftime("%Y-%m-%d")
-    end = sim_date.strftime("%Y-%m-%d")
-    calendar = api.get_calendar(start, end)
-
-    prev_day = None
-    for entry in calendar:
-        entry_date = entry.date
-        if hasattr(entry_date, "date"):
-            entry_date = entry_date.date()
-        if entry_date < sim_date:
-            prev_day = entry_date
+    prev_day = fmp_client.find_previous_trading_day(sim_date)
 
     # PDH/PDL
     if prev_day:
-        pd_start = TZ.localize(datetime(prev_day.year, prev_day.month, prev_day.day, 1, 0))
-        pd_end = TZ.localize(datetime(prev_day.year, prev_day.month, prev_day.day, 16, 58))
-        bars = api.get_bars(ticker, TimeFrame.Minute,
-                            start=pd_start.isoformat(), end=pd_end.isoformat()).df
+        bars = fmp_client.fetch_bars(ticker, "1min", start=prev_day, end=prev_day)
         filtered = _filter_bars_by_time(bars, config.FULL_DAY_START, config.FULL_DAY_END)
         pdh, pdl = compute_pdh_pdl(filtered)
         levels["PDH"] = pdh
         levels["PDL"] = pdl
 
     # PMH/PML
-    pm_start = TZ.localize(datetime(sim_date.year, sim_date.month, sim_date.day, 1, 0))
-    pm_end = TZ.localize(datetime(sim_date.year, sim_date.month, sim_date.day, 6, 29))
-    bars = api.get_bars(ticker, TimeFrame.Minute,
-                        start=pm_start.isoformat(), end=pm_end.isoformat()).df
+    bars = fmp_client.fetch_bars(ticker, "1min", start=sim_date, end=sim_date)
     filtered = _filter_bars_by_time(bars, config.PREMARKET_START, config.PREMARKET_END)
     pmh, pml = compute_pmh_pml(filtered)
     levels["PMH"] = pmh
     levels["PML"] = pml
 
     # ORH/ORL
-    or_start = TZ.localize(datetime(sim_date.year, sim_date.month, sim_date.day, 6, 30))
-    or_end = TZ.localize(datetime(sim_date.year, sim_date.month, sim_date.day, 6, 35))
-    bars = api.get_bars(ticker, TimeFrame.Minute,
-                        start=or_start.isoformat(), end=or_end.isoformat()).df
-    filtered = _filter_bars_by_time(bars, config.OR_START, config.OR_END)
-    orh, orl = compute_opening_range(filtered)
+    or_bars = _filter_bars_by_time(bars, config.OR_START, config.OR_END)
+    orh, orl = compute_opening_range(or_bars)
     levels["ORH"] = orh
     levels["ORL"] = orl
 
     return levels
 
 
-def fetch_monitor_bars(api, ticker, sim_date):
-    """Fetch 1-min bars for the monitor window (06:30–08:00)."""
-    mon_start = TZ.localize(datetime(sim_date.year, sim_date.month, sim_date.day, 6, 30))
-    mon_end = TZ.localize(datetime(sim_date.year, sim_date.month, sim_date.day, 8, 0))
-    bars = api.get_bars(ticker, TimeFrame.Minute,
-                        start=mon_start.isoformat(), end=mon_end.isoformat()).df
-    if bars.empty:
-        return bars
+def fetch_monitor_bars(ticker, sim_date):
+    """Fetch 1-min bars for the monitor window."""
+    bars = fmp_client.fetch_bars(ticker, "1min", start=sim_date, end=sim_date)
     return _filter_bars_by_time(bars, config.MONITOR_START, config.MONITOR_END)
 
 
@@ -111,7 +86,7 @@ def compute_bar_change_pct(open_price, close_price):
     return ((close_price - open_price) / open_price) * 100
 
 
-def simulate_multi(api, tickers, sim_date, speed=0.03):
+def simulate_multi(tickers, sim_date, speed=0.03):
     """Replay bars for multiple tickers on a unified timeline."""
 
     print(f"\n{BOLD}{'=' * 70}{RESET}")
@@ -125,7 +100,7 @@ def simulate_multi(api, tickers, sim_date, speed=0.03):
     print("Computing levels...", end="", flush=True)
     for ticker in tickers:
         try:
-            all_levels[ticker] = get_levels_for_sim(api, ticker, sim_date)
+            all_levels[ticker] = get_levels_for_sim(ticker, sim_date)
             sys.stdout.write(f" {ticker}")
             sys.stdout.flush()
         except Exception as e:
@@ -151,19 +126,24 @@ def simulate_multi(api, tickers, sim_date, speed=0.03):
     # Fetch bars for all tickers
     all_bars = {}
     for ticker in tickers:
-        all_bars[ticker] = fetch_monitor_bars(api, ticker, sim_date)
+        all_bars[ticker] = fetch_monitor_bars(ticker, sim_date)
 
     # Build unified timeline (sorted unique timestamps across all tickers)
     all_timestamps = set()
     for ticker, bars in all_bars.items():
-        if not bars.empty:
-            for ts in bars.index:
-                all_timestamps.add(ts)
+        for bar in bars:
+            all_timestamps.add(bar["date"])
     timeline = sorted(all_timestamps)
 
     if not timeline:
         print("No bars found for any ticker on this date.")
         return
+
+    # Build lookup: {(ticker, date_str): bar}
+    bar_lookup = {}
+    for ticker, bars in all_bars.items():
+        for bar in bars:
+            bar_lookup[(ticker, bar["date"])] = bar
 
     # Init alert states
     alert_states = {}
@@ -188,25 +168,30 @@ def simulate_multi(api, tickers, sim_date, speed=0.03):
     total_alerts = 0
     alerts_by_ticker = defaultdict(int)
 
-    for ts in timeline:
-        ts_pdt = ts.tz_convert(TZ) if hasattr(ts, 'tz_convert') else ts
-        time_str = ts_pdt.strftime("%H:%M")
-
+    for ts_str in timeline:
         # Collect bars at this timestamp for each ticker
         bars_at_ts = {}
         for ticker in tickers:
-            if not all_bars[ticker].empty and ts in all_bars[ticker].index:
-                bars_at_ts[ticker] = all_bars[ticker].loc[ts]
+            bar = bar_lookup.get((ticker, ts_str))
+            if bar:
+                bars_at_ts[ticker] = bar
+
+        # Parse time for display
+        ts_local = None
+        for bar in bars_at_ts.values():
+            ts_local = bar["datetime_et"].astimezone(TZ)
+            break
+        time_str = ts_local.strftime("%H:%M") if ts_local else ts_str
 
         # Track session opens
-        for ticker, row in bars_at_ts.items():
+        for ticker, bar in bars_at_ts.items():
             if ticker not in session_open:
-                session_open[ticker] = row["open"]
+                session_open[ticker] = bar["open"]
 
         # Evaluate alerts for each ticker at this timestamp
         alerts_this_bar = []
-        for ticker, row in bars_at_ts.items():
-            bar_vol = row.get("volume", 0)
+        for ticker, bar in bars_at_ts.items():
+            bar_vol = bar.get("volume", 0)
             volume_history[ticker].append(bar_vol)
             # Compute rolling average volume
             hist = volume_history[ticker]
@@ -220,16 +205,17 @@ def simulate_multi(api, tickers, sim_date, speed=0.03):
                 cluster_peers = all_clusters[ticker].get(level_name, [])
 
                 # Check proximity
+                bar_dt = bar["datetime_et"].astimezone(TZ)
                 prox_alert = check_proximity(
-                    ticker, level_name, level_price, row["close"], state,
-                    timestamp=ts_pdt.to_pydatetime(),
+                    ticker, level_name, level_price, bar["close"], state,
+                    timestamp=bar_dt,
                 )
                 if prox_alert:
                     alerts_this_bar.append((ticker, prox_alert))
 
                 alert = evaluate_bar(
                     ticker, level_name, level_price,
-                    row["open"], row["high"], row["low"], row["close"],
+                    bar["open"], bar["high"], bar["low"], bar["close"],
                     state,
                     volume=bar_vol,
                     avg_volume=avg_vol,
@@ -238,14 +224,14 @@ def simulate_multi(api, tickers, sim_date, speed=0.03):
                 if alert:
                     # Reformat with historical timestamp + all context
                     pa_label, pa_detail = analyze_price_action(
-                        row["open"], row["high"], row["low"], row["close"]
+                        bar["open"], bar["high"], bar["low"], bar["close"]
                     )
                     vol_tag = classify_volume(bar_vol, avg_vol)
                     alert = format_alert(
                         ticker, level_name, level_price,
                         _get_event_type(state),
-                        row["close"],
-                        ts_pdt.to_pydatetime(),
+                        bar["close"],
+                        bar_dt,
                         pa_label, pa_detail,
                         vol_tag,
                         cluster_peers or None,
@@ -257,8 +243,8 @@ def simulate_multi(api, tickers, sim_date, speed=0.03):
             # Get QQQ status at this moment
             qqq_ctx = ""
             if BENCHMARK in bars_at_ts and BENCHMARK in session_open:
-                qqq_row = bars_at_ts[BENCHMARK]
-                qqq_chg = compute_bar_change_pct(session_open[BENCHMARK], qqq_row["close"])
+                qqq_bar = bars_at_ts[BENCHMARK]
+                qqq_chg = compute_bar_change_pct(session_open[BENCHMARK], qqq_bar["close"])
                 chg_color = GREEN if qqq_chg >= 0 else RED
                 qqq_ctx = f"  {DIM}[{BENCHMARK} {chg_color}{qqq_chg:+.2f}%{RESET}{DIM}]{RESET}"
 
@@ -266,8 +252,8 @@ def simulate_multi(api, tickers, sim_date, speed=0.03):
                 # Add the stock's own % change
                 stock_ctx = ""
                 if ticker != BENCHMARK and ticker in bars_at_ts and ticker in session_open:
-                    stock_row = bars_at_ts[ticker]
-                    stock_chg = compute_bar_change_pct(session_open[ticker], stock_row["close"])
+                    stock_bar = bars_at_ts[ticker]
+                    stock_chg = compute_bar_change_pct(session_open[ticker], stock_bar["close"])
                     chg_color = GREEN if stock_chg >= 0 else RED
                     stock_ctx = f"  {DIM}[{ticker} {chg_color}{stock_chg:+.2f}%{RESET}{DIM}]{RESET}"
 
@@ -279,16 +265,16 @@ def simulate_multi(api, tickers, sim_date, speed=0.03):
 
     # ===== SESSION SUMMARY =====
     print(f"\n{BOLD}{'=' * 70}{RESET}")
-    print(f"{BOLD}  Simulation Summary — {sim_date}{RESET}")
+    print(f"{BOLD}  Simulation Summary -- {sim_date}{RESET}")
     print(f"{BOLD}{'=' * 70}{RESET}\n")
 
     # Final % changes
-    print(f"{BOLD}Session Performance (06:30 open → last bar):{RESET}")
+    print(f"{BOLD}Session Performance (06:30 open -> last bar):{RESET}")
     print(f"{'Ticker':<6} {'Change':>8}")
     print("-" * 16)
     for ticker in tickers:
-        if ticker in session_open and not all_bars[ticker].empty:
-            last_close = all_bars[ticker].iloc[-1]["close"]
+        if ticker in session_open and all_bars[ticker]:
+            last_close = all_bars[ticker][-1]["close"]
             chg = compute_bar_change_pct(session_open[ticker], last_close)
             chg_color = GREEN if chg >= 0 else RED
             label_color = MAGENTA if ticker == BENCHMARK else CYAN
@@ -335,18 +321,15 @@ def _get_event_type(state):
 
 
 def main():
-    if not config.ALPACA_API_KEY or not config.ALPACA_API_SECRET:
-        print("Error: Set ALPACA_API_KEY and ALPACA_API_SECRET environment variables.")
+    if not config.FMP_API_KEY:
+        print("Error: Set FMP_API_KEY environment variable.")
         sys.exit(1)
-
-    api = REST(config.ALPACA_API_KEY, config.ALPACA_API_SECRET, config.BASE_URL)
 
     # Parse args
     sim_date = None
     custom_tickers = []
 
     for arg in sys.argv[1:]:
-        # If it looks like a date, parse it
         try:
             sim_date = datetime.strptime(arg, "%Y-%m-%d").date()
         except ValueError:
@@ -360,13 +343,13 @@ def main():
 
     # Default to most recent trading day
     if sim_date is None:
-        sim_date = _find_previous_trading_day(api)
+        sim_date = fmp_client.find_previous_trading_day()
         if sim_date is None:
             print("Could not determine previous trading day.")
             sys.exit(1)
         print(f"Using most recent trading day: {sim_date}")
 
-    simulate_multi(api, tickers, sim_date)
+    simulate_multi(tickers, sim_date)
 
 
 if __name__ == "__main__":
